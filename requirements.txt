@@ -1,0 +1,4 @@
+pywin32>=306
+openai>=1.0.0
+keyboard>=0.13.5
+pillow>=10.0.0

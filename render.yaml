@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: clipboard-relay
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: echo "No dependencies required"
+    startCommand: python relay_server.py --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
