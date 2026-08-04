@@ -15,12 +15,6 @@ try:
 except ImportError:
     HAS_PIL = False
 
-try:
-    import keyboard as kb
-    HAS_KB = True
-except ImportError:
-    HAS_KB = False
-
 CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTZBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
 # Public relay URL (Render.com - free forever)
 RELAY_URL = "https://clipboard-relay-ra48.onrender.com"
@@ -58,20 +52,11 @@ def enable_acrylic(hwnd):
     return False
 
 
-def hide_window_from_taskbar(hwnd):
-    try:
-        style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)
-        ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x00000080)
-    except Exception:
-        pass
-
-
 class ClipboardReceiver:
-    def __init__(self, relay_url=RELAY_URL, room="", silent=False):
+    def __init__(self, relay_url=RELAY_URL, room=""):
         self.relay_url = relay_url
         self.room = room
         self.running = True
-        self._silent = silent
         self._last_ts = 0.0
         self._last_text = ""
         self._locked = False
@@ -90,7 +75,6 @@ class ClipboardReceiver:
         self.root.attributes('-alpha', 0.75)
         self.root.configure(bg=BG)
         if platform.system() == "Windows":
-            self.root.after(50, lambda: hide_window_from_taskbar(self.root.winfo_id()))
             self.root.after(100, lambda: enable_acrylic(self.root.winfo_id()))
         self.root.geometry(f"{self._init_w}x{self._init_h}+150+150")
 
@@ -104,26 +88,16 @@ class ClipboardReceiver:
         self.root.bind('<ButtonRelease-1>', self._on_release)
         self.root.bind('<Motion>', self._on_motion)
 
-        if HAS_KB:
-            kb.add_hotkey('ctrl+shift+h', self._toggle_visibility)
-
         self._build_ui()
         self.root.update_idletasks()
         self.root.update()
-        if platform.system() == "Windows":
-            self._apply_capture_hide()
 
         if self.room:
             self._save_config()
-            if self._silent:
-                self.root.withdraw()
-                self._set_status("Hidden (Ctrl+Shift+H)", "#ffa500")
-            else:
-                self._set_status(f"Room: {room} \u2713", FG)
+            self._set_status(f"Room: {room} \u2713", FG)
             threading.Thread(target=self._poll_loop, daemon=True).start()
         else:
-            if not self._silent:
-                self.root.after(100, self._prompt_for_code)
+            self.root.after(100, self._prompt_for_code)
 
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
 
@@ -370,20 +344,6 @@ class ClipboardReceiver:
             if new_h > self._min_h: new_y = self._resize_data["ry"] + dy
         self.root.geometry(f"{new_w}x{new_h}+{new_x}+{new_y}")
 
-    def _apply_capture_hide(self):
-        try:
-            user32 = ctypes.windll.user32
-            hwnd = self.root.winfo_id()
-            for h in (hwnd, user32.GetParent(hwnd), user32.GetAncestor(hwnd, 2)):
-                if h and user32.SetWindowDisplayAffinity(h, 0x00000011):
-                    break
-            else:
-                for h in (hwnd, user32.GetParent(hwnd), user32.GetAncestor(hwnd, 2)):
-                    if h:
-                        user32.SetWindowDisplayAffinity(h, 0x00000001)
-        except Exception:
-            pass
-
     def _toggle_visibility(self):
         if self.root.winfo_viewable():
             self.root.withdraw()
@@ -391,8 +351,6 @@ class ClipboardReceiver:
             self.root.deiconify()
             self.root.lift()
             self.root.attributes('-topmost', True)
-            if platform.system() == "Windows":
-                self.root.after(100, self._apply_capture_hide)
             if not self.room:
                 self.root.after(200, self._prompt_for_code)
 
@@ -439,11 +397,6 @@ class ClipboardReceiver:
 
     def _quit(self):
         self.running = False
-        if HAS_KB:
-            try:
-                kb.remove_hotkey('ctrl+shift+h')
-            except Exception:
-                pass
         self.root.quit()
         self.root.destroy()
 
@@ -465,13 +418,11 @@ if __name__ == "__main__":
     if "--help" in args or "-h" in args:
         print_help()
 
-    silent = "--silent" in args
-
     for i, arg in enumerate(args):
         if arg == "--url" and i + 1 < len(args):
             relay_url = args[i + 1]
         if arg == "--room" and i + 1 < len(args):
             room = args[i + 1]
 
-    app = ClipboardReceiver(relay_url=relay_url, room=room, silent=silent)
+    app = ClipboardReceiver(relay_url=relay_url, room=room)
     app.run()
