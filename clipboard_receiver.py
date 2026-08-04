@@ -138,20 +138,31 @@ class ClipboardReceiver:
         outer = tk.Frame(dlg, bg=BORDER)
         outer.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
         main = tk.Frame(outer, bg=BG)
-        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+        main.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(main, text="Clipboard Receiver", bg=BG, fg=FG,
-                 font=(FONT_FAM, 14, "bold")).pack(pady=(0, 4))
+        hdr = tk.Frame(main, bg=BG)
+        hdr.pack(fill=tk.X, padx=8, pady=(6, 0))
 
-        tk.Label(main, text="Enter the pairing code from the Sender:", bg=BG, fg=MUTED,
+        tk.Label(hdr, text="Clipboard Receiver", bg=BG, fg=FG,
+                 font=(FONT_FAM, 14, "bold")).pack(side=tk.LEFT)
+
+        dlg_close_btn = tk.Label(hdr, text="\u2716", bg=BG, fg="#ff6b6b",
+                                 font=(FONT_FAM, 12), cursor="hand2", padx=6)
+        dlg_close_btn.pack(side=tk.RIGHT)
+        dlg_close_btn.bind('<Button-1>', lambda e: dlg.destroy())
+
+        body = tk.Frame(main, bg=BG)
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(4, 12))
+
+        tk.Label(body, text="Enter the pairing code from the Sender:", bg=BG, fg=MUTED,
                  font=SMALL_FONT).pack()
 
-        entry = tk.Entry(main, bg="#161b22", fg="#e6edf3", font=(FONT_FAM, 20, "bold"),
+        entry = tk.Entry(body, bg="#161b22", fg="#e6edf3", font=(FONT_FAM, 20, "bold"),
                           insertbackground="#e6edf3", relief=tk.FLAT, bd=6, justify=tk.CENTER,
                           highlightthickness=1, highlightcolor=BORDER, highlightbackground=BORDER)
         entry.pack(fill=tk.X, ipady=8, pady=8)
 
-        err_lbl = tk.Label(main, text="", bg=BG, fg="#ff6b6b", font=SMALL_FONT)
+        err_lbl = tk.Label(body, text="", bg=BG, fg="#ff6b6b", font=SMALL_FONT)
         err_lbl.pack()
 
         def connect():
@@ -165,7 +176,7 @@ class ClipboardReceiver:
             self._set_status(f"Room: {code} \u2713", FG)
             threading.Thread(target=self._poll_loop, daemon=True).start()
 
-        tk.Button(main, text="CONNECT", bg="#238636", fg="white",
+        tk.Button(body, text="CONNECT", bg="#238636", fg="white",
                   font=(FONT_FAM, 10, "bold"), relief=tk.FLAT,
                   activebackground="#2ea043", cursor="hand2",
                   command=connect).pack(pady=(4, 0))
