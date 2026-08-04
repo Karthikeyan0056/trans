@@ -8,14 +8,6 @@ import platform
 import ctypes
 import urllib.request
 import urllib.error
-import urllib.parse
-
-try:
-    import win32clipboard
-    import win32con
-    HAS_WIN32_CLIPBOARD = True
-except ImportError:
-    HAS_WIN32_CLIPBOARD = False
 
 try:
     from PIL import Image, ImageTk
@@ -29,8 +21,9 @@ try:
 except ImportError:
     HAS_KB = False
 
-CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
-DEFAULT_RELAY_URL = "http://127.0.0.1:5000"
+CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTZBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
+# Public relay URL (Render.com - free forever)
+RELAY_URL = "https://clipboard-relay-ra48.onrender.com"
 RELAY_POLL_SECONDS = 0.5
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "receiver_config.json")
 
@@ -41,32 +34,6 @@ BORDER = "#30363d"
 FONT_FAM = "Consolas" if platform.system() == "Windows" else "Menlo"
 FONT = (FONT_FAM, 11)
 SMALL_FONT = (FONT_FAM, 9)
-
-
-def normalize_relay_url(url):
-    return (url or DEFAULT_RELAY_URL).rstrip("/")
-
-
-def relay_endpoint(relay_url, action, room):
-    return f"{normalize_relay_url(relay_url)}/{action}/{urllib.parse.quote(room, safe='')}"
-
-
-def write_clipboard(text):
-    """Put received Unicode text in the local Windows clipboard."""
-    if not HAS_WIN32_CLIPBOARD:
-        return False
-    for _ in range(3):
-        try:
-            win32clipboard.OpenClipboard()
-            try:
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
-                return True
-            finally:
-                win32clipboard.CloseClipboard()
-        except Exception:
-            time.sleep(0.05)
-    return False
 
 
 def enable_acrylic(hwnd):
@@ -100,9 +67,9 @@ def hide_window_from_taskbar(hwnd):
 
 
 class ClipboardReceiver:
-    def __init__(self, relay_url=None, room="", silent=False):
-        self.relay_url = normalize_relay_url(relay_url or os.environ.get("CLIPBOARD_RELAY_URL"))
-        self.room = room.strip().upper()
+    def __init__(self, relay_url=RELAY_URL, room="", silent=False):
+        self.relay_url = relay_url
+        self.room = room
         self.running = True
         self._silent = silent
         self._last_ts = 0.0
@@ -152,7 +119,7 @@ class ClipboardReceiver:
                 self.root.withdraw()
                 self._set_status("Hidden (Ctrl+Shift+H)", "#ffa500")
             else:
-                self._set_status(f"Room: {self.room} \u2713", FG)
+                self._set_status(f"Room: {room} \u2713", FG)
             threading.Thread(target=self._poll_loop, daemon=True).start()
         else:
             if not self._silent:
@@ -192,9 +159,11 @@ class ClipboardReceiver:
             if not code:
                 err_lbl.config(text="Please enter the code")
                 return
-            self._status.config(text=f"Looking up room {code}...", fg="#ffa500")
-            self.root.update()
-            threading.Thread(target=self._lookup_room, args=(code, dlg, err_lbl), daemon=True).start()
+            self.room = code
+            self._save_config()
+            dlg.destroy()
+            self._set_status(f"Room: {code} \u2713", FG)
+            threading.Thread(target=self._poll_loop, daemon=True).start()
 
         tk.Button(main, text="CONNECT", bg="#238636", fg="white",
                   font=(FONT_FAM, 10, "bold"), relief=tk.FLAT,
@@ -204,23 +173,6 @@ class ClipboardReceiver:
         entry.bind('<Return>', lambda e: connect())
         entry.focus_force()
         dlg.grab_set()
-
-    def _lookup_room(self, code, dlg, err_lbl):
-        # A room exists after the sender posts its first clipboard update.
-        try:
-            with urllib.request.urlopen(relay_endpoint(self.relay_url, "receive", code), timeout=10):
-                self.room = code
-            self._save_config()
-            self.root.after(0, dlg.destroy)
-            self.root.after(0, lambda: self._set_status(f"Room: {code} \u2713", FG))
-            threading.Thread(target=self._poll_loop, daemon=True).start()
-        except urllib.error.HTTPError as e:
-            message = "Waiting for sender to send clipboard data..." if e.code == 404 else f"HTTP {e.code}. Retrying..."
-            self.root.after(0, lambda lbl=err_lbl, message=message: lbl.config(text=message, fg="#ffa500"))
-            self.root.after(3000, lambda: self._lookup_room(code, dlg, err_lbl))
-        except Exception:
-            self.root.after(0, lambda lbl=err_lbl: lbl.config(text="Cannot reach relay. Retrying...", fg="#ff6b6b"))
-            self.root.after(3000, lambda: self._lookup_room(code, dlg, err_lbl))
 
     def _build_ui(self):
         self._icon_img = None
@@ -445,23 +397,24 @@ class ClipboardReceiver:
 
     def _on_data(self, text):
         self._set_text(text)
-        write_clipboard(text)
 
     def _poll_loop(self):
         while self.running and self.room:
+            url = f"{self.relay_url.rstrip('/')}/receive/{self.room}"
             try:
-                req = urllib.request.Request(relay_endpoint(self.relay_url, "receive", self.room))
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=20) as resp:
                     data = json.loads(resp.read())
-                    ts = data.get("timestamp", data.get("ts", 0.0))
                     text = data.get("text", "")
-                    if ts > self._last_ts and text and text != self._last_text:
-                        self._last_ts = ts
+                    if text and text != self._last_text:
                         self._last_text = text
                         self.root.after(0, self._set_status, f"Room {self.room} \u2713", FG)
                         self.root.after(0, self._on_data, text)
             except urllib.error.HTTPError as e:
-                self.root.after(0, self._set_status, f"HTTP {e.code}", "#ff6b6b")
+                if e.code == 404:
+                    self.root.after(0, self._set_status, f"Room {self.room}: no data yet", "#ffa500")
+                else:
+                    self.root.after(0, self._set_status, f"HTTP {e.code}", "#ff6b6b")
             except Exception:
                 self.root.after(0, self._set_status, f"Waiting for room {self.room}...", "#ffa500")
             time.sleep(RELAY_POLL_SECONDS)
@@ -494,8 +447,8 @@ def print_help():
 
 if __name__ == "__main__":
     cfg = __import__("json").load(open(CONFIG_FILE)) if os.path.exists(CONFIG_FILE) else {}
-    relay_url = cfg.get("relay_url", os.environ.get("CLIPBOARD_RELAY_URL", DEFAULT_RELAY_URL))
     room = cfg.get("room", "")
+    relay_url = cfg.get("relay_url", RELAY_URL)
 
     args = sys.argv[1:]
     if "--help" in args or "-h" in args:
@@ -504,14 +457,10 @@ if __name__ == "__main__":
     silent = "--silent" in args
 
     for i, arg in enumerate(args):
-        if arg == "--relay" and i + 1 < len(args):
+        if arg == "--url" and i + 1 < len(args):
             relay_url = args[i + 1]
-        elif arg == "--room" and i + 1 < len(args):
+        if arg == "--room" and i + 1 < len(args):
             room = args[i + 1]
 
-    if room:
-        app = ClipboardReceiver(relay_url=relay_url, room=room, silent=silent)
-        app.run()
-    else:
-        app = ClipboardReceiver(relay_url=relay_url, silent=silent)
-        app.run()
+    app = ClipboardReceiver(relay_url=relay_url, room=room, silent=silent)
+    app.run()

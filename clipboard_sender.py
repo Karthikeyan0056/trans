@@ -5,7 +5,6 @@ import json
 import sys
 import urllib.request
 import urllib.error
-import urllib.parse
 import platform
 import ctypes
 import tkinter as tk
@@ -20,9 +19,10 @@ except ImportError:
     HAS_PIL = False
 
 CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTZBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
-# Both applications must use the same relay URL and room.  Override this with
-# --relay https://your-server.example or CLIPBOARD_RELAY_URL.
-DEFAULT_RELAY_URL = "http://127.0.0.1:5000"
+# Public relay URL (Render.com - free forever)
+RELAY_URL = "https://clipboard-relay-ra48.onrender.com"
+PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(PKG_DIR, "sender_config.json")
 
 BG = "#0d1117"
 FG = "#00ff88"
@@ -88,22 +88,13 @@ def read_clipboard():
     return ""
 
 
-def normalize_relay_url(url):
-    return (url or DEFAULT_RELAY_URL).rstrip("/")
-
-
-def relay_endpoint(relay_url, action, room):
-    return f"{normalize_relay_url(relay_url)}/{action}/{urllib.parse.quote(room, safe='')}"
-
-
 class ClipboardSender:
-    def __init__(self, relay_url=None, room=""):
+    def __init__(self):
         self.running = True
         self.last_sent = ""
         self.last_clip = ""
-        self.relay_url = normalize_relay_url(relay_url or os.environ.get("CLIPBOARD_RELAY_URL"))
-        self.room_code = room.strip().upper()
-        self._monitor_started = False
+        self.relay_url = RELAY_URL
+        self.room_code = ""
         self._locked = False
         self._maximized = False
         self._normal_geo = None
@@ -115,7 +106,7 @@ class ClipboardSender:
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', True)
         self.root.configure(bg=BG)
-        self.root.geometry("420x300+150+150")
+        self.root.geometry("420x320+150+150")
         if platform.system() == "Windows":
             self.root.after(50, lambda: hide_from_taskbar(self.root.winfo_id()))
             self.root.after(100, lambda: enable_acrylic(self.root.winfo_id()))
@@ -132,8 +123,6 @@ class ClipboardSender:
 
         self._build_code_ui()
         self._build_input_window()
-        if self.room_code:
-            self.root.after(100, self._connect_room)
 
     def _build_code_ui(self):
         outer = tk.Frame(self.root, bg=BORDER)
@@ -188,11 +177,25 @@ class ClipboardSender:
                                     font=(FONT_FAM, 20, "bold"), anchor=tk.CENTER, height=2)
         self._code_label.pack(fill=tk.X, padx=1, pady=1)
 
+        cfgi = self._load_config()
+        if cfgi and cfgi.get("relay_url"):
+            self.relay_url = cfgi["relay_url"]
+
+        rl = tk.Frame(main, bg=BG)
+        rl.pack(fill=tk.X, padx=12, pady=(4, 2))
+        tk.Label(rl, text="Relay:", bg=BG, fg=MUTED, font=SMALL_FONT).pack(anchor=tk.W)
+        self._relay_entry = tk.Entry(rl, bg="#161b22", fg="#e6edf3", font=(FONT_FAM, 9),
+                                     insertbackground="#e6edf3", relief=tk.FLAT, bd=5,
+                                     highlightthickness=1, highlightcolor=BORDER, highlightbackground=BORDER)
+        self._relay_entry.insert(0, self.relay_url)
+        self._relay_entry.pack(fill=tk.X, ipady=3)
+        self._relay_entry.bind('<FocusOut>', self._on_relay_change)
+
         bot_bar = tk.Frame(main, bg=BG, height=22)
         bot_bar.pack(fill=tk.X, padx=8, pady=(6, 2))
         bot_bar.pack_propagate(False)
 
-        self._size_label = tk.Label(bot_bar, text="420x300", bg=BG, fg=MUTED, font=SMALL_FONT)
+        self._size_label = tk.Label(bot_bar, text="420x320", bg=BG, fg=MUTED, font=SMALL_FONT)
         self._size_label.pack(side=tk.LEFT)
 
         tk.Label(bot_bar, text="Opacity:", bg=BG, fg=MUTED, font=SMALL_FONT).pack(side=tk.LEFT, padx=(12, 2))
@@ -337,13 +340,36 @@ class ClipboardSender:
 
         self._input_win = win
 
-    def _generate_code(self):
-        self.room_code = "".join(_r.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
-        self._connect_room()
+    def _load_config(self):
+        try:
+            if os.path.exists(CONFIG_FILE):
+                with open(CONFIG_FILE, "r") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return None
 
-    def _connect_room(self):
-        """Select a relay room; it is created by the first clipboard POST."""
-        code = self.room_code
+    def _save_config(self):
+        try:
+            with open(CONFIG_FILE, "w") as f:
+                json.dump({"relay_url": self.relay_url}, f, indent=4)
+        except Exception:
+            pass
+
+    def _on_relay_change(self, event=None):
+        raw = self._relay_entry.get().strip()
+        if raw:
+            if not raw.startswith("http://") and not raw.startswith("https://"):
+                raw = "http://" + raw
+            self.relay_url = raw
+            self._save_config()
+
+    def _generate_code(self):
+        self._on_relay_change()
+        self._status.config(text="Checking relay...", fg="#ffa500")
+        self.root.update()
+        code = "".join(_r.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
+        self.room_code = code
         self._code_label.config(text=f"  {code}  ", fg=FG, bg="#0d1117")
         self._gen_btn.config(text="RE-GENERATE")
         self._status.config(text=f"Room: {code}", fg=FG)
@@ -354,9 +380,7 @@ class ClipboardSender:
         self._input_win.deiconify()
         self._input_win.lift()
         self._input_win.focus_force()
-        if not self._monitor_started:
-            self._monitor_started = True
-            threading.Thread(target=self._clipboard_monitor, daemon=True).start()
+        threading.Thread(target=self._clipboard_monitor, daemon=True).start()
 
     def _on_typing(self, event=None):
         text = self._input_text.get(1.0, tk.END).strip()
@@ -389,12 +413,15 @@ class ClipboardSender:
                     pass
 
     def _send(self, text):
-        body = json.dumps({"text": text, "ts": time.time()}).encode()
-        req = urllib.request.Request(relay_endpoint(self.relay_url, "send", self.room_code), data=body,
-                                     headers={"Content-Type": "application/json"}, method="POST")
+        url = f"{self.relay_url.rstrip('/')}/send/{self.room_code}"
+        body = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                self.root.after(0, lambda: self._status.config(text="Sent", fg=FG if resp.status == 200 else "#ff6b6b"))
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if json.loads(resp.read()).get("status") == "ok":
+                    self.root.after(0, lambda: self._status.config(text="Sent", fg=FG))
+                else:
+                    self.root.after(0, lambda: self._status.config(text="Failed", fg="#ff6b6b"))
         except urllib.error.HTTPError as e:
             self.root.after(0, lambda: self._status.config(text=f"HTTP {e.code}", fg="#ff6b6b"))
         except Exception:
@@ -511,13 +538,5 @@ class ClipboardSender:
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    relay_url = os.environ.get("CLIPBOARD_RELAY_URL", DEFAULT_RELAY_URL)
-    room = ""
-    for i, arg in enumerate(args):
-        if arg == "--relay" and i + 1 < len(args):
-            relay_url = args[i + 1]
-        elif arg == "--room" and i + 1 < len(args):
-            room = args[i + 1]
-    app = ClipboardSender(relay_url=relay_url, room=room)
+    app = ClipboardSender()
     app.run()
