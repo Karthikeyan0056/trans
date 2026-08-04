@@ -15,6 +15,12 @@ try:
 except ImportError:
     HAS_PIL = False
 
+try:
+    import keyboard as kb
+    HAS_KB = True
+except ImportError:
+    HAS_KB = False
+
 CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTZBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
 # Public relay URL (Render.com - free forever)
 RELAY_URL = "https://clipboard-relay-ra48.onrender.com"
@@ -61,12 +67,14 @@ class ClipboardReceiver:
         self._last_text = ""
         self._locked = False
         self._maximized = False
-        self._init_w = 349
-        self._init_h = 542
         self._min_w = 280
         self._min_h = 150
         self._normal_geo = None
         self._transparency = 75
+        self._step_dir = None
+        self.STEP_PX = 50
+        self._init_w = 320
+        self._init_h = 510
 
         self.root = tk.Tk()
         self.root.title("")
@@ -76,7 +84,9 @@ class ClipboardReceiver:
         self.root.configure(bg=BG)
         if platform.system() == "Windows":
             self.root.after(100, lambda: enable_acrylic(self.root.winfo_id()))
-        self.root.geometry(f"{self._init_w}x{self._init_h}+150+150")
+        sw_ = self.root.winfo_screenwidth()
+        sh_ = self.root.winfo_screenheight()
+        self.root.geometry(f"{self._init_w}x{self._init_h}+{(sw_ - self._init_w) // 2}+{(sh_ - self._init_h) // 2}")
 
         self._drag_data = {"x": 0, "y": 0}
         self._resize_data = {"x": 0, "y": 0, "w": 0, "h": 0}
@@ -91,6 +101,12 @@ class ClipboardReceiver:
         self._build_ui()
         self.root.update_idletasks()
         self.root.update()
+
+        if HAS_KB:
+            kb.add_hotkey('ctrl+shift+z', self._toggle_visibility)
+            kb.add_hotkey('ctrl+shift+up', self._move_top_center)
+            kb.add_hotkey('ctrl+shift+left', lambda: self._top_step('left'))
+            kb.add_hotkey('ctrl+shift+right', lambda: self._top_step('right'))
 
         if self.room:
             self._save_config()
@@ -354,6 +370,50 @@ class ClipboardReceiver:
             if not self.room:
                 self.root.after(200, self._prompt_for_code)
 
+    # ------------------------------------------------------------------
+    # Window positioning shortcuts
+    # ------------------------------------------------------------------
+    def _move_window(self, x, y):
+        """Clamp (x,y) inside the screen and move the window there immediately."""
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = max(0, min(x, sw - w))
+        y = max(0, min(y, sh - h))
+        self.root.geometry(f"+{x}+{y}")
+
+    def _reset_step(self, d):
+        """Disarm the 'second press = full move' state for direction d."""
+        if self._step_dir == d:
+            self._step_dir = None
+
+    def _top_step(self, d):
+        """First press steps 50px toward a top corner; same-direction next press goes fully there."""
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        sw = self.root.winfo_screenwidth()
+        if self._step_dir == d:
+            # Already armed in this direction -> jump fully to the corner.
+            x, y = (0, 0) if d == 'left' else (sw - w, 0)
+            self._step_dir = None
+        else:
+            # Single step toward the requested top corner and arm the direction.
+            cx = self.root.winfo_x()
+            cy = self.root.winfo_y()
+            x = cx - self.STEP_PX if d == 'left' else cx + self.STEP_PX
+            y = cy - self.STEP_PX
+            self._step_dir = d
+            self.root.after(2000, lambda: self._reset_step(d))
+        self._move_window(x, y)
+
+    def _move_top_center(self):
+        """Snap the window to the horizontal center at the top of the screen."""
+        w = self.root.winfo_width()
+        sw = self.root.winfo_screenwidth()
+        self._step_dir = None
+        self._move_window((sw - w) // 2, 0)
+
     def _set_status(self, text, color):
         self._status.config(text=text, fg=color)
 
@@ -397,6 +457,11 @@ class ClipboardReceiver:
 
     def _quit(self):
         self.running = False
+        if HAS_KB:
+            try:
+                kb.remove_all_hotkeys()
+            except Exception:
+                pass
         self.root.quit()
         self.root.destroy()
 

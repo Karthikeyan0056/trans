@@ -18,6 +18,12 @@ try:
 except ImportError:
     HAS_PIL = False
 
+try:
+    import keyboard as kb
+    HAS_KB = True
+except ImportError:
+    HAS_KB = False
+
 CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTZBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
 # Public relay URL (Render.com - free forever)
 RELAY_URL = "https://clipboard-relay-ra48.onrender.com"
@@ -124,6 +130,25 @@ class ClipboardSender:
         self._build_code_ui()
         self._build_input_window()
 
+        if HAS_KB:
+            kb.add_hotkey('ctrl+shift+z', self._hotkey_toggle)
+
+    def _hotkey_toggle(self):
+        target = getattr(self, '_input_win', None)
+        if target is not None:
+            if target.winfo_viewable():
+                target.withdraw()
+            else:
+                target.deiconify()
+                target.lift()
+                target.attributes('-topmost', True)
+        elif self.root.winfo_viewable():
+            self.root.withdraw()
+        else:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes('-topmost', True)
+
     def _build_code_ui(self):
         outer = tk.Frame(self.root, bg=BORDER)
         outer.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
@@ -161,7 +186,7 @@ class ClipboardSender:
         close_btn = tk.Label(btn_frame, text="\u2716", bg=BG, fg="#ff6b6b",
                              font=(FONT_FAM, 10), cursor="hand2", width=2)
         close_btn.pack(side=tk.LEFT)
-        close_btn.bind('<Button-1>', lambda e: self._quit())
+        close_btn.bind('<Button-1>', lambda e: self._confirm_close())
 
         tk.Frame(main, bg=BORDER, height=1).pack(fill=tk.X, padx=0, pady=0)
 
@@ -318,7 +343,19 @@ class ClipboardSender:
 
         self._inp_room_label = tk.Label(hdr, text="Notepad", bg=BG, fg=MUTED, font=SMALL_FONT)
         self._inp_room_label.pack(side=tk.LEFT)
-        tk.Label(hdr, text="ESC", bg=BG, fg=MUTED, font=SMALL_FONT).pack(side=tk.RIGHT, padx=(0, 8))
+
+        inp_btnf = tk.Frame(hdr, bg=BG)
+        inp_btnf.pack(side=tk.RIGHT, padx=(0, 6))
+
+        newcode_btn = tk.Label(inp_btnf, text="\u21BB NEW CODE", bg=BG, fg=FG,
+                               font=SMALL_FONT, cursor="hand2", padx=6)
+        newcode_btn.pack(side=tk.LEFT)
+        newcode_btn.bind('<Button-1>', lambda e: self._generate_code())
+
+        inp_close_btn = tk.Label(inp_btnf, text="\u2716", bg=BG, fg="#ff6b6b",
+                                 font=(FONT_FAM, 10), cursor="hand2", padx=4)
+        inp_close_btn.pack(side=tk.LEFT)
+        inp_close_btn.bind('<Button-1>', lambda e: self._confirm_close())
 
         tk.Frame(main, bg=BORDER, height=1).pack(fill=tk.X, padx=0, pady=0)
 
@@ -337,6 +374,24 @@ class ClipboardSender:
 
         tk.Label(bot_bar, text="Ctrl+C anywhere \u2192 auto-sends", bg=BG, fg=MUTED,
                  font=SMALL_FONT).pack(side=tk.RIGHT)
+
+        grip = tk.Label(bot_bar, text="\u2923", bg=BG, fg=MUTED,
+                        font=(FONT_FAM, 10), cursor="size_nw_se")
+        grip.pack(side=tk.RIGHT, padx=(0, 1))
+        grip_start = {"x": 0, "y": 0, "w": 0, "h": 0}
+
+        def grip_down(e):
+            grip_start["x"], grip_start["y"] = e.x_root, e.y_root
+            grip_start["w"], grip_start["h"] = win.winfo_width(), win.winfo_height()
+
+        def grip_move(e):
+            nw = max(280, grip_start["w"] + (e.x_root - grip_start["x"]))
+            nh = max(150, grip_start["h"] + (e.y_root - grip_start["y"]))
+            win.geometry(f"{nw}x{nh}+{win.winfo_x()}+{win.winfo_y()}")
+            self._inp_size_label.config(text=f"{nw}x{nh}")
+
+        grip.bind('<Button-1>', grip_down)
+        grip.bind('<B1-Motion>', grip_move)
 
         self._input_win = win
 
@@ -380,6 +435,7 @@ class ClipboardSender:
         self._input_win.deiconify()
         self._input_win.lift()
         self._input_win.focus_force()
+        self.root.withdraw()
         threading.Thread(target=self._clipboard_monitor, daemon=True).start()
 
     def _on_typing(self, event=None):
@@ -444,6 +500,42 @@ class ClipboardSender:
             self.root.deiconify()
             self.root.lift()
             self.root.attributes('-topmost', True)
+
+    def _confirm_close(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("")
+        dlg.overrideredirect(True)
+        dlg.attributes('-topmost', True)
+        dlg.configure(bg=BG)
+        dlg.geometry("360x160+300+300")
+
+        outer = tk.Frame(dlg, bg=BORDER)
+        outer.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        main = tk.Frame(outer, bg=BG)
+        main.pack(fill=tk.BOTH, expand=True, padx=16, pady=14)
+
+        tk.Label(main, text="Do you want to close?", bg=BG, fg="#e6edf3",
+                 font=(FONT_FAM, 12, "bold")).pack(pady=(0, 12))
+
+        btnf = tk.Frame(main, bg=BG)
+        btnf.pack()
+
+        def do_yes():
+            dlg.destroy()
+            self._quit()
+
+        tk.Button(btnf, text="YES", bg="#238636", fg="white",
+                  font=(FONT_FAM, 10, "bold"), relief=tk.FLAT, width=8,
+                  activebackground="#2ea043", cursor="hand2",
+                  command=do_yes).pack(side=tk.LEFT, padx=6)
+
+        tk.Button(btnf, text="NO", bg="#21262d", fg="#e6edf3",
+                  font=(FONT_FAM, 10, "bold"), relief=tk.FLAT, width=8,
+                  activebackground="#30363d", cursor="hand2",
+                  command=dlg.destroy).pack(side=tk.LEFT, padx=6)
+
+        dlg.grab_set()
+        dlg.focus_force()
 
     def _toggle_maximize(self):
         if self._maximized:
@@ -530,6 +622,11 @@ class ClipboardSender:
 
     def _quit(self):
         self.running = False
+        if HAS_KB:
+            try:
+                kb.remove_all_hotkeys()
+            except Exception:
+                pass
         self.root.quit()
         self.root.destroy()
 
