@@ -15,11 +15,74 @@ try:
 except ImportError:
     HAS_PIL = False
 
-try:
-    import keyboard as kb
-    HAS_KB = True
-except ImportError:
-    HAS_KB = False
+# --- Global hotkeys via Windows RegisterHotKey (no external hook library) ---
+from ctypes import wintypes as _wintypes
+
+_HOTKEY_MOD_CTRL = 0x0002
+_HOTKEY_MOD_SHIFT = 0x0004
+_HOTKEY_WM = 0x0312
+_VK_Z = 0x5A
+_VK_UP = 0x26
+_VK_LEFT = 0x25
+_VK_RIGHT = 0x27
+
+
+class _HOTKEY_MSG(ctypes.Structure):
+    _fields_ = [("hwnd", _wintypes.HWND), ("message", _wintypes.UINT),
+                ("wParam", _wintypes.WPARAM), ("lParam", _wintypes.LPARAM),
+                ("time", _wintypes.DWORD), ("pt", _wintypes.POINT)]
+
+
+class HotkeyManager:
+    """Registers global Ctrl+Shift+<key> hotkeys without the 'keyboard' library."""
+
+    def __init__(self, root):
+        self._root = root
+        self._items = []          # (id, vk, callback)
+        self._id_map = {}
+        self._thread = None
+        self._stop = threading.Event()
+        self._ok = True
+
+    def add(self, vk, fn):
+        hkid = 0x400 + len(self._items) + 1
+        self._items.append((hkid, vk, fn))
+
+    def _schedule(self, fn):
+        # Hotkey thread is not the Tk thread; route through the event loop.
+        try:
+            self._root.after(0, fn)
+        except Exception:
+            pass
+
+    def _loop(self):
+        import time as _t
+        user32 = ctypes.windll.user32
+        # Create a message queue on this thread.
+        msg = _HOTKEY_MSG()
+        user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)
+        for hkid, vk, fn in self._items:
+            if not user32.RegisterHotKey(None, hkid, _HOTKEY_MOD_CTRL | _HOTKEY_MOD_SHIFT, vk):
+                self._ok = False
+            self._id_map[hkid] = fn
+        while not self._stop.is_set():
+            while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1) > 0:
+                if msg.message == _HOTKEY_WM and msg.wParam in self._id_map:
+                    self._schedule(self._id_map[msg.wParam])
+                else:
+                    user32.TranslateMessage(ctypes.byref(msg))
+                    user32.DispatchMessageW(ctypes.byref(msg))
+            _t.sleep(0.02)
+
+    def start(self):
+        try:
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
+        except Exception:
+            self._ok = False
+
+    def stop(self):
+        self._stop.set()
 
 CLIP_ICON_B64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAYElEQVR4nGNgoBAwYhU9k/Yfq7jJLAz1LDiNNlZC5Z+9h1UZEwOFgIUop6PLI3mFBavTQc7F5mSYHE4X4PI/HsCCTZBXqB+r4s/vCokz4DMWhaMuwA2onBJBAEeapxkAAKPOIgT85dQVAAAAAElFTkSuQmCC"
 # Public relay URL (Render.com - free forever)
@@ -102,11 +165,12 @@ class ClipboardReceiver:
         self.root.update_idletasks()
         self.root.update()
 
-        if HAS_KB:
-            kb.add_hotkey('ctrl+shift+z', self._toggle_visibility)
-            kb.add_hotkey('ctrl+shift+up', self._move_top_center)
-            kb.add_hotkey('ctrl+shift+left', lambda: self._top_step('left'))
-            kb.add_hotkey('ctrl+shift+right', lambda: self._top_step('right'))
+        self._hotkeys = HotkeyManager(self.root)
+        self._hotkeys.add(_VK_Z, self._toggle_visibility)
+        self._hotkeys.add(_VK_UP, self._move_top_center)
+        self._hotkeys.add(_VK_LEFT, lambda: self._top_step('left'))
+        self._hotkeys.add(_VK_RIGHT, lambda: self._top_step('right'))
+        self._hotkeys.start()
 
         if self.room:
             self._save_config()
@@ -457,11 +521,7 @@ class ClipboardReceiver:
 
     def _quit(self):
         self.running = False
-        if HAS_KB:
-            try:
-                kb.remove_all_hotkeys()
-            except Exception:
-                pass
+        self._hotkeys.stop()
         self.root.quit()
         self.root.destroy()
 
