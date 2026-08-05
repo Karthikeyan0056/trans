@@ -122,10 +122,11 @@ def enable_acrylic(hwnd):
 
 
 class ClipboardReceiver:
-    def __init__(self, relay_url=RELAY_URL, room=""):
+    def __init__(self, relay_url=RELAY_URL, room="", silent=False):
         self.relay_url = relay_url
         self.room = room
         self.running = True
+        self._silent = silent
         self._last_ts = 0.0
         self._last_text = ""
         self._locked = False
@@ -172,6 +173,10 @@ class ClipboardReceiver:
         self._hotkeys.add(_VK_RIGHT, lambda: self._top_step('right'))
         self._hotkeys.start()
 
+        if self._silent:
+            self.root.withdraw()
+            self._set_status("Hidden (Ctrl+Shift+Z)", "#ffa500")
+
         if platform.system() == "Windows":
             self.root.after(300, self._apply_capture_hide)
 
@@ -179,7 +184,7 @@ class ClipboardReceiver:
             self._save_config()
             self._set_status(f"Room: {room} \u2713", FG)
             threading.Thread(target=self._poll_loop, daemon=True).start()
-        else:
+        elif not self._silent:
             self.root.after(100, self._prompt_for_code)
 
         self.root.protocol("WM_DELETE_WINDOW", self._quit)
@@ -558,11 +563,13 @@ if __name__ == "__main__":
     if "--help" in args or "-h" in args:
         print_help()
 
+    silent = "--silent" in args or "--hidden" in args
+
     for i, arg in enumerate(args):
         if arg == "--url" and i + 1 < len(args):
             relay_url = args[i + 1]
         if arg == "--room" and i + 1 < len(args):
             room = args[i + 1]
 
-    app = ClipboardReceiver(relay_url=relay_url, room=room)
+    app = ClipboardReceiver(relay_url=relay_url, room=room, silent=silent)
     app.run()
