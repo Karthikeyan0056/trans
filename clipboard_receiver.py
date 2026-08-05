@@ -172,6 +172,9 @@ class ClipboardReceiver:
         self._hotkeys.add(_VK_RIGHT, lambda: self._top_step('right'))
         self._hotkeys.start()
 
+        if platform.system() == "Windows":
+            self.root.after(300, self._apply_capture_hide)
+
         if self.room:
             self._save_config()
             self._set_status(f"Room: {room} \u2713", FG)
@@ -431,6 +434,8 @@ class ClipboardReceiver:
             self.root.deiconify()
             self.root.lift()
             self.root.attributes('-topmost', True)
+            if platform.system() == "Windows":
+                self.root.after(150, self._apply_capture_hide)
             if not self.room:
                 self.root.after(200, self._prompt_for_code)
 
@@ -446,6 +451,16 @@ class ClipboardReceiver:
         x = max(0, min(x, sw - w))
         y = max(0, min(y, sh - h))
         self.root.geometry(f"+{x}+{y}")
+
+    def _apply_capture_hide(self):
+        """Exclude the window from screen capture/sharing (invisible in screen share)."""
+        try:
+            user32 = ctypes.windll.user32
+            top = user32.GetAncestor(self.root.winfo_id(), 2)  # GA_ROOT
+            if top:
+                user32.SetWindowDisplayAffinity(top, 0x00000011)  # WDA_EXCLUDEFROMCAPTURE
+        except Exception:
+            pass
 
     def _reset_step(self, d):
         """Disarm the 'second press = full move' state for direction d."""
